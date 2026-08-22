@@ -49,6 +49,7 @@ def probe(
             "research": {"provider": "hermes", "bin": bins["hermes"], "home": "", "effort": "default"},
         },
         "LANE_MECHANICAL_EFFORT": "low",
+        "SUPERVISE": True,
         "LIMITS": {
             "claude": {"session_pct": claude_session, "weekly_pct": 15},
             "codex": {"weekly_pct": codex_weekly, "reset_credits": 1},
@@ -186,16 +187,29 @@ class PlanTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             plan_path = Path(td) / "plan.json"
             run_dir = Path(td) / "run"
+            proj = Path(td) / "proj"
+            proj.mkdir()
             plan_path.write_text(json.dumps(p), encoding="utf-8")
             import subprocess
             out = subprocess.check_output(
-                [sys.executable, str(SCRIPTS / "run.py"), "--plan", str(plan_path), "--run-dir", str(run_dir)],
+                [
+                    sys.executable,
+                    str(SCRIPTS / "run.py"),
+                    "--plan",
+                    str(plan_path),
+                    "--run-dir",
+                    str(run_dir),
+                    "--cwd",
+                    str(proj),
+                ],
                 text=True,
             )
             parsed = json.loads(out)
             self.assertFalse(parsed["execute"])
             write = next(r for r in parsed["results"] if r["kind"] == "write")
             self.assertEqual(write["argv"][0], "grok")
+            self.assertIn("--prompt-file", write["argv"])
+            self.assertFalse(any("Do ONLY" in a for a in write["argv"]))
             self.assertTrue(Path(parsed["run_dir"], "STATUS.md").is_file())
 
     def test_execute_failure_blocks_review(self):
@@ -208,13 +222,15 @@ class PlanTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             plan_path = Path(td) / "plan.json"
             run_dir = Path(td) / "run"
+            proj = Path(td) / "proj"
+            proj.mkdir()
             plan_path.write_text(json.dumps(p), encoding="utf-8")
             def fake_run(cmd, **kwargs):
                 if cmd and cmd[0] == "git":
                     return subprocess.CompletedProcess(cmd, 0, stdout="/tmp\n", stderr="")
                 return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="fail")
             buf = io.StringIO()
-            argv = ["run.py", "--plan", str(plan_path), "--execute", "--run-dir", str(run_dir)]
+            argv = ["run.py", "--plan", str(plan_path), "--execute", "--run-dir", str(run_dir), "--cwd", str(proj)]
             with patch.object(sys, "argv", argv), patch.object(lane_run.subprocess, "run", side_effect=fake_run), patch("sys.stdout", buf):
                 lane_run.main()
             parsed = json.loads(buf.getvalue())
@@ -236,6 +252,186 @@ class PlanTests(unittest.TestCase):
             )
             parsed = json.loads(out)
             self.assertIn("impl", kinds(parsed))
+
+    def test_function_docs_is_write_not_impl(self):
+        p = plan.build_plan("함수 설명을 README에 써줘", probe("grok"), "run")
+        self.assertNotIn("impl", kinds(p))
+        self.assertIn("write", kinds(p))
+
+    def test_deploy_guide_is_write_not_impl(self):
+        p = plan.build_plan("배포 가이드 초안 써줘", probe("grok"), "run")
+        self.assertNotIn("impl", kinds(p))
+        self.assertIn("write", kinds(p))
+
+    def test_design_doc_is_write_not_hard(self):
+        p = plan.build_plan("설계 문서 초안 써줘", probe("grok"), "run")
+        self.assertNotIn("hard", kinds(p))
+        self.assertIn("write", kinds(p))
+
+    def test_english_and_splits(self):
+        p = plan.build_plan("fix the bug and polish the readme", probe("grok"), "run")
+        self.assertIn("impl", kinds(p))
+        self.assertIn("write", kinds(p))
+        self.assertNotIn("readme", item(p, "impl")["spec"].lower())
+
+    def test_default_run_dir_is_timestamp(self):
+        import os
+        import subprocess
+        data = probe("claude", in_orca=False)
+        p = plan.build_plan("카피 다듬어 줘", data, "run")
+        with tempfile.TemporaryDirectory() as td:
+            plan_path = Path(td) / "plan.json"
+            proj = Path(td) / "proj"
+            proj.mkdir()
+            plan_path.write_text(json.dumps(p), encoding="utf-8")
+            env = os.environ.copy()
+            env["HOME"] = td
+            out = subprocess.check_output(
+                [sys.executable, str(SCRIPTS / "run.py"), "--plan", str(plan_path), "--cwd", str(proj)],
+                text=True,
+                env=env,
+            )
+            parsed = json.loads(out)
+            name = Path(parsed["run_dir"]).name
+            self.assertNotEqual(name, "current")
+            self.assertTrue(name[0].isdigit())
+            self.assertTrue(Path(parsed["run_dir"], "STATUS.md").is_file())
+
+    def test_refuses_skill_package_as_implicit_cwd(self):
+        import subprocess
+        data = probe("claude", in_orca=False)
+        p = plan.build_plan("카피 다듬어 줘", data, "run")
+        with tempfile.TemporaryDirectory() as td:
+            plan_path = Path(td) / "plan.json"
+            run_dir = Path(td) / "run"
+            plan_path.write_text(json.dumps(p), encoding="utf-8")
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPTS / "run.py"),
+                    "--plan",
+                    str(plan_path),
+                    "--run-dir",
+                    str(run_dir),
+                ],
+                cwd=str(SCRIPTS.parent),
+                text=True,
+                capture_output=True,
+            )
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertIn("--cwd", completed.stderr)
+
+    def test_refuses_run_dir_named_current(self):
+        import subprocess
+        data = probe("claude", in_orca=False)
+        p = plan.build_plan("카피 다듬어 줘", data, "run")
+        with tempfile.TemporaryDirectory() as td:
+            plan_path = Path(td) / "plan.json"
+            proj = Path(td) / "proj"
+            proj.mkdir()
+            plan_path.write_text(json.dumps(p), encoding="utf-8")
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPTS / "run.py"),
+                    "--plan",
+                    str(plan_path),
+                    "--run-dir",
+                    str(Path(td) / "current"),
+                    "--cwd",
+                    str(proj),
+                ],
+                text=True,
+                capture_output=True,
+            )
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertIn("current", completed.stderr)
+
+    def test_orca_supervise_uses_worker_start(self):
+        import subprocess
+        p = plan.build_plan("버그 고쳐 줘", probe("grok", in_orca=True), "run")
+        self.assertTrue(p["supervise"])
+        self.assertEqual(item(p, "impl")["via"], "orca")
+        with tempfile.TemporaryDirectory() as td:
+            plan_path = Path(td) / "plan.json"
+            run_dir = Path(td) / "run"
+            proj = Path(td) / "proj"
+            proj.mkdir()
+            plan_path.write_text(json.dumps(p), encoding="utf-8")
+            out = subprocess.check_output(
+                [
+                    sys.executable,
+                    str(SCRIPTS / "run.py"),
+                    "--plan",
+                    str(plan_path),
+                    "--run-dir",
+                    str(run_dir),
+                    "--cwd",
+                    str(proj),
+                ],
+                text=True,
+            )
+            parsed = json.loads(out)
+            impl = next(r for r in parsed["results"] if r["kind"] == "impl")
+            self.assertIn("worker-start", impl["argv"])
+            self.assertTrue(any("worker-start" in step for step in impl["steps"]))
+
+    def test_orca_handoff_uses_worktree_create(self):
+        import subprocess
+        data = probe("grok", in_orca=True)
+        data["SUPERVISE"] = False
+        p = plan.build_plan("버그 고쳐 줘", data, "run")
+        self.assertFalse(p["supervise"])
+        with tempfile.TemporaryDirectory() as td:
+            plan_path = Path(td) / "plan.json"
+            run_dir = Path(td) / "run"
+            proj = Path(td) / "proj"
+            proj.mkdir()
+            plan_path.write_text(json.dumps(p), encoding="utf-8")
+            out = subprocess.check_output(
+                [
+                    sys.executable,
+                    str(SCRIPTS / "run.py"),
+                    "--plan",
+                    str(plan_path),
+                    "--run-dir",
+                    str(run_dir),
+                    "--cwd",
+                    str(proj),
+                ],
+                text=True,
+            )
+            parsed = json.loads(out)
+            impl = next(r for r in parsed["results"] if r["kind"] == "impl")
+            self.assertEqual(impl["argv"][1], "worktree")
+            self.assertFalse(any("Do ONLY this impl" in a for a in impl["argv"]))
+
+    def test_overlay_fills_claude_without_orca(self):
+        import probe as lane_probe
+        parsed = {}
+        usage = {
+            "claude": {"error": False, "fiveHourPercent": 40, "sevenDayPercent": 10},
+            "codex": {"error": False, "fiveHourPercent": 20, "sevenDayPercent": 80},
+        }
+        out = lane_probe.overlay_cli_limits(parsed, usage)
+        self.assertEqual(out["claude"]["session_pct"], 40)
+        self.assertEqual(out["codex"]["weekly_pct"], 80)
+
+    def test_overlay_does_not_clobber_orca(self):
+        import probe as lane_probe
+        parsed = {"claude": {"session_pct": 11, "session": "11%"}}
+        usage = {"claude": {"error": False, "fiveHourPercent": 99}}
+        out = lane_probe.overlay_cli_limits(parsed, usage)
+        self.assertEqual(out["claude"]["session_pct"], 11)
+
+    def test_skill_md_avoids_fixed_run_dir(self):
+        text = (SCRIPTS.parent / "SKILL.md").read_text()
+        self.assertNotIn("runs/current", text)
+        self.assertNotIn("/tmp/lane-plan.json", text)
+
+    def test_dispatch_md_no_cat_prompt(self):
+        text = (SCRIPTS.parent / "references" / "dispatch.md").read_text()
+        self.assertNotIn("$(cat", text)
 
 
 if __name__ == "__main__":

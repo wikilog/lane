@@ -9,26 +9,29 @@ license: MIT
 compatibility: Claude Code, Codex, Grok, MiniMax (coordinator only), Cursor, Gemini CLI, OpenCode, Hermes, Orca. Python 3.9+ for scripts.
 metadata:
   author: marcus
-  version: "0.6.0"
+  version: "0.7.0"
   sku: lane
 ---
 
 # /lane
 
-Coordinator only. MiniMax may coordinate; it is never a worker. Do not do another lane's job in this session.
+Coordinator only. MiniMax may coordinate; it is never a worker. This session does only `here` items. Everything else is `run.py --execute`.
 
 ## Path (do this, in order)
 
 ```bash
 DIR="${LANE_SKILL_DIR:-$HOME/.agents/skills/lane}"
 python3 "$DIR/scripts/probe.py"
-python3 "$DIR/scripts/plan.py" --prompt "<user request>" > /tmp/lane-plan.json
-python3 "$DIR/scripts/run.py" --plan /tmp/lane-plan.json --run-dir "$HOME/.cache/lane/runs/current"
+python3 "$DIR/scripts/plan.py" --prompt-file "$PROMPT_FILE" > "$HOME/.cache/lane/last-plan.json"
+# optional: edit last-plan.json once (kinds / via only)
+python3 "$DIR/scripts/run.py" --plan "$HOME/.cache/lane/last-plan.json" --cwd "$PWD"
 ```
 
-1. Print `STATUS.md` from the run dir (the board).
+`run.py` writes `~/.cache/lane/runs/<timestamp>/`. Do not pass `--run-dir current`.
+
+1. Print `STATUS.md` from the JSON `run_dir` (the board).
 2. `/lane plan` or `/route-model` → stop.
-3. `/lane` / 나눠서 / 실행 → `run.py --execute --plan … --run-dir …` then do every `coordinator` (`here`) item yourself.
+3. `/lane` / 나눠서 / 실행 → same `run.py` with `--execute --cwd "$PWD"`. Then do every `coordinator` (`here`) item yourself. Do not implement `cli` / `orca` items in this session.
 4. Stop if a needed item failed (`blocked` in STATUS). One verify pass after workers, different vendor from impl. Retry impl at most once, and only if the user asked.
 
 Do not load dispatch.md unless `run.py` is missing.
@@ -38,6 +41,8 @@ Do not load dispatch.md unless `run.py` is missing.
 `kind` → lane: write/review → Grok, impl/mechanical → Codex, hard → Claude, research → cheap research CLI.
 
 `via`: `here` this session · `cli` provider CLI · `orca` only if `IN_ORCA=true` · `skip` do not substitute another paid CLI.
+
+`supervise: true` (default in an Orca terminal) → `worker-start` + `worker_done`. `supervise: false` → `worktree create` handoff.
 
 Gates: missing bin; Codex weekly 100% (no Claude spill); Claude session ≥ skip_at; Grok weekly ≥ skip_at for write CLI; **that provider's** limits unknown → skip impl/hard CLI; never_assign; review vendor ≠ impl **and** ≠ host.
 

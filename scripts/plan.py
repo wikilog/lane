@@ -16,9 +16,10 @@ import probe  # noqa: E402
 KIND_PATTERNS = {
     "impl": (
         r"구현", r"고치", r"고쳐", r"수정", r"버그", r"테스트 코드", r"테스트 추가",
-        r"배포", r"코딩", r"함수", r"컴포넌트", r"패치", r"기능 추가", r"코드 추가",
+        r"배포해", r"배포 해", r"배포하", r"코딩", r"컴포넌트", r"패치", r"기능 추가", r"코드 추가",
+        r"함수 추가", r"함수를 추가", r"함수 만들", r"함수 구현",
         r"만들어 줘", r"만들어줘", r"harvest", r"\bfix\b", r"\bbug\b", r"implement",
-        r"refactor", r"\btests?\b", r"deploy", r"\bpatch\b",
+        r"refactor", r"\btests?\b", r"\bdeploy\b", r"\bpatch\b",
     ),
     "write": (
         r"문서", r"카피", r"위키", r"윤문", r"초안", r"readme", r"\bdocs\b",
@@ -29,8 +30,9 @@ KIND_PATTERNS = {
         r"리뷰", r"검수", r"2차", r"\breview\b",
     ),
     "hard": (
-        r"아키텍처", r"설계", r"보안", r"고위험", r"architecture", r"stuck",
+        r"아키텍처", r"보안", r"고위험", r"architecture", r"stuck",
         r"deadlock", r"cve", r"threat",
+        r"설계(?!\s*(문서|초안|가이드))",
     ),
     "research": (
         r"조사", r"리서치", r"논문", r"다국어", r"research", r"survey", r"paper",
@@ -100,7 +102,7 @@ def goal_line(text: str) -> str:
 def split_clauses(text: str) -> list[str]:
     cleaned = re.sub(r"^/lane\s+(plan\s+)?", "", text.strip(), flags=re.I)
     parts = re.split(
-        r"\s*,\s*|\s+그리고\s+|\s+및\s+|\n+|(?<=고치고)\s+|(?<=하고)\s+|(?<=해서)\s+|(?<=[가-힣]고)\s+",
+        r"\s*,\s*|\s+그리고\s+|\s+및\s+|\s+and\s+|\n+|(?<=고치고)\s+|(?<=하고)\s+|(?<=해서)\s+|(?<=[가-힣]고)\s+",
         cleaned,
     )
     return [p.strip() for p in parts if p.strip()]
@@ -300,6 +302,7 @@ def build_plan(text: str, data: dict, mode: str) -> dict:
         "host": host,
         "orca": orca,
         "in_orca": in_orca,
+        "supervise": bool(data.get("SUPERVISE", True)) and in_orca,
         "limits_known": limits_known(data),
         "approve_for_me": bool(data.get("APPROVE_FOR_ME", False)),
         "tokens": "kept on-lane" if len(items) == 1 and items[0]["via"] == "here" else "split",

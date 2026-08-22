@@ -1,5 +1,10 @@
 {
   "version": 1,
+  "supervise_default": true,
+  "claude_session_skip_at": 90,
+  "grok_weekly_skip_at": 90,
+  "never_spill_impl_to_claude": true,
+  "approve_for_me": false,
   "lanes": {
     "write": "grok",
     "impl": "codex",

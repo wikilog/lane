@@ -99,6 +99,73 @@ def expand(path: str) -> str:
     return str(Path(os.path.expanduser(path))) if path else ""
 
 
+def parse_orca_limits(accounts: dict) -> dict:
+    limits = (accounts.get("result") or {}).get("rateLimits") or {}
+    parsed: dict = {}
+    for name in ("claude", "codex", "grok"):
+        block = limits.get(name) if isinstance(limits.get(name), dict) else None
+        parsed[name] = {
+            "session": pct(block, "session"),
+            "weekly": pct(block, "weekly"),
+            "session_pct": limit_pct(block, "session"),
+            "weekly_pct": limit_pct(block, "weekly"),
+        }
+        if name == "codex" and isinstance(block, dict):
+            credits = block.get("rateLimitResetCredits") or {}
+            if isinstance(credits, dict) and credits.get("availableCount") is not None:
+                parsed[name]["reset_credits"] = credits["availableCount"]
+    return parsed
+
+
+def _fill_pct(block: dict, key: str, value) -> None:
+    if block.get(f"{key}_pct") is not None or value is None:
+        return
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return
+    block[f"{key}_pct"] = n
+    block[key] = f"{n}%"
+
+
+def overlay_cli_limits(parsed: dict, usage: dict) -> dict:
+    out = dict(parsed)
+    mapping = {
+        "claude": ("fiveHourPercent", "sevenDayPercent"),
+        "codex": ("fiveHourPercent", "sevenDayPercent"),
+    }
+    for name, (session_key, weekly_key) in mapping.items():
+        row = usage.get(name)
+        if not isinstance(row, dict) or row.get("error"):
+            continue
+        block = dict(out[name]) if isinstance(out.get(name), dict) else {}
+        _fill_pct(block, "session", row.get(session_key))
+        _fill_pct(block, "weekly", row.get(weekly_key))
+        if block:
+            out[name] = block
+    return out
+
+
+def load_cli_usage() -> dict:
+    node = which("node")
+    if not node:
+        return {}
+    root = Path.home() / ".claude" / "plugins" / "cache" / "claude-dashboard"
+    matches = list(root.glob("claude-dashboard/*/dist/check-usage.js"))
+    if not matches:
+        return {}
+
+    def ver(path: Path):
+        try:
+            return tuple(int(x) for x in path.parts[-3].split("."))
+        except ValueError:
+            return (0,)
+
+    script = sorted(matches, key=ver)[-1]
+    data = run_json([node, str(script), "--json"], timeout=12)
+    return data if isinstance(data, dict) else {}
+
+
 def resolve_research(cfg: dict) -> tuple[str, str, str]:
     providers = cfg.get("providers") if isinstance(cfg.get("providers"), dict) else {}
     lane = (cfg.get("lanes") or {}).get("research") or "auto"
@@ -188,9 +255,12 @@ def collect() -> dict:
         "IN_ORCA": in_orca_terminal(),
         "ORCA": "missing" if bin_map["orca"] == "missing" else "down",
         "APPROVE_FOR_ME": bool(cfg.get("approve_for_me", False)),
+        "SUPERVISE": bool(cfg.get("supervise_default", True)),
         "LIMITS": {},
     }
 
+    parsed: dict = {}
+    limit_sources: list[str] = []
     if bin_map["orca"] != "missing":
         status = run_json(["orca", "status", "--json"])
         if isinstance(status, dict) and status.get("ok"):
@@ -199,27 +269,21 @@ def collect() -> dict:
             if runtime.get("appVersion"):
                 out["ORCA_VERSION"] = runtime["appVersion"]
         accounts = run_json(["orca", "account", "list", "--json"])
-        if not (isinstance(accounts, dict) and accounts.get("ok")):
-            if not out["LIMITS"]:
-                out["LIMITS"] = {"error": "unavailable"} if out["ORCA"] != "missing" else {}
-            return out
-    else:
-        return out
-    limits = (accounts.get("result") or {}).get("rateLimits") or {}
-    parsed: dict = {}
-    for name in ("claude", "codex", "grok"):
-        block = limits.get(name) if isinstance(limits.get(name), dict) else None
-        parsed[name] = {
-            "session": pct(block, "session"),
-            "weekly": pct(block, "weekly"),
-            "session_pct": limit_pct(block, "session"),
-            "weekly_pct": limit_pct(block, "weekly"),
-        }
-        if name == "codex" and isinstance(block, dict):
-            credits = block.get("rateLimitResetCredits") or {}
-            if isinstance(credits, dict) and credits.get("availableCount") is not None:
-                parsed[name]["reset_credits"] = credits["availableCount"]
-    out["LIMITS"] = parsed
+        if isinstance(accounts, dict) and accounts.get("ok"):
+            parsed = parse_orca_limits(accounts)
+            if parsed:
+                limit_sources.append("orca")
+    usage = load_cli_usage()
+    if usage:
+        before = json.dumps(parsed, sort_keys=True)
+        parsed = overlay_cli_limits(parsed, usage)
+        if json.dumps(parsed, sort_keys=True) != before:
+            limit_sources.append("cli")
+    if parsed:
+        out["LIMITS"] = parsed
+        out["LIMITS_SOURCE"] = "+".join(limit_sources)
+    elif bin_map["orca"] != "missing":
+        out["LIMITS"] = {"error": "unavailable"}
     return out
 
 
@@ -246,8 +310,11 @@ def print_kv(data: dict) -> None:
     print(f"LANE_MECHANICAL_EFFORT={data.get('LANE_MECHANICAL_EFFORT', 'low')}")
     print(f"IN_ORCA={str(data.get('IN_ORCA', False)).lower()}")
     print(f"ORCA={data.get('ORCA')}")
+    print(f"SUPERVISE={str(data.get('SUPERVISE', True)).lower()}")
     if data.get("ORCA_VERSION"):
         print(f"ORCA_VERSION={data['ORCA_VERSION']}")
+    if data.get("LIMITS_SOURCE"):
+        print(f"LIMITS_SOURCE={data['LIMITS_SOURCE']}")
     limits = data.get("LIMITS") or {}
     if limits.get("error"):
         print("LIMITS=unavailable")

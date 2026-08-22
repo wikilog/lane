@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "lanes": {
+    "write": "grok",
+    "impl": "codex",
+    "hard": "claude",
+    "research": "hermes"
+  },
+  "providers": {
+    "hermes": {
+      "bin": "hermes",
+      "home": "~/.hermes-qwen"
+    }
+  }
+}

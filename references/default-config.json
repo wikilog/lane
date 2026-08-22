@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "supervise_default": true,
+  "claude_session_skip_at": 90,
+  "grok_weekly_skip_at": 90,
+  "never_spill_impl_to_claude": true,
+  "approve_for_me": false,
+  "never_assign": ["minimax", "maxi"],
+  "lanes": {
+    "write": "grok",
+    "impl": "codex",
+    "hard": "claude",
+    "research": "auto"
+  },
+  "effort": {
+    "write": "default",
+    "impl": "medium",
+    "hard": "high",
+    "mechanical": "low"
+  }
+}

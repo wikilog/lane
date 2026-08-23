@@ -75,6 +75,129 @@ def load_json(path: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def _parse_scalar(raw: str):
+    s = raw.strip()
+    if s in {"true", "True", "yes"}:
+        return True
+    if s in {"false", "False", "no"}:
+        return False
+    if s in {"null", "~", ""}:
+        return None
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in {'"', "'"}:
+        return s[1:-1]
+    try:
+        if s.startswith("0") and len(s) > 1:
+            raise ValueError
+        return int(s)
+    except ValueError:
+        return s
+
+
+def parse_simple_yaml(text: str) -> dict:
+    stripped = text.lstrip()
+    if stripped.startswith("{"):
+        data = json.loads(text)
+        return data if isinstance(data, dict) else {}
+    try:
+        import yaml  # type: ignore
+
+        data = yaml.safe_load(text)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        pass
+    return _indent_yaml(text)
+
+
+def _next_content(lines: list[str], start: int) -> str | None:
+    for raw in lines[start:]:
+        body = raw.split("#", 1)[0].rstrip()
+        if body.strip():
+            return body
+    return None
+
+
+def _indent_yaml(text: str) -> dict:
+    root: dict = {}
+    stack: list[tuple[int, object]] = [(-1, root)]
+    lines = text.splitlines()
+    for i, raw in enumerate(lines):
+        body = raw.split("#", 1)[0].rstrip()
+        if not body.strip():
+            continue
+        indent = len(body) - len(body.lstrip(" "))
+        stripped = body.strip()
+        while len(stack) > 1 and indent <= stack[-1][0]:
+            stack.pop()
+        parent = stack[-1][1]
+        if stripped.startswith("- "):
+            if not isinstance(parent, list):
+                raise ValueError(f"yaml list without a key at line {i + 1}")
+            parent.append(_parse_scalar(stripped[2:]))
+            continue
+        if ":" not in stripped:
+            raise ValueError(f"yaml line {i + 1}")
+        if not isinstance(parent, dict):
+            raise ValueError(f"yaml map under list at line {i + 1}")
+        key, rest = stripped.split(":", 1)
+        key = key.strip()
+        rest = rest.strip()
+        if rest:
+            parent[key] = _parse_scalar(rest)
+            continue
+        nxt = _next_content(lines, i + 1)
+        child: dict | list
+        if nxt is not None and nxt.strip().startswith("- ") and (len(nxt) - len(nxt.lstrip(" "))) > indent:
+            child = []
+        else:
+            child = {}
+        parent[key] = child
+        stack.append((indent, child))
+    return root
+
+
+def load_yaml(path: Path) -> dict:
+    if not path.is_file():
+        return {}
+    try:
+        data = parse_simple_yaml(path.read_text())
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def lanes_yaml_to_cfg(data: dict) -> dict:
+    out: dict = {}
+    for key in ("lanes", "fallbacks", "never_assign", "providers", "models", "effort"):
+        if key in data:
+            out[key] = data[key]
+    if "pin" in data:
+        models = dict(out.get("models") or {})
+        models["pin"] = bool(data["pin"])
+        out["models"] = models
+    return out
+
+
+def skillops_lanes_paths() -> list[Path]:
+    paths: list[Path] = []
+    env = os.environ.get("SKILLOPS_LANES")
+    if env:
+        paths.append(Path(env).expanduser())
+    paths.append(Path.home() / ".config" / "skillops" / "lanes.yaml")
+    root = git_root()
+    if root is not None and (root / ".skillops" / "manifest.yaml").is_file():
+        paths.append(root / "profiles" / "lanes.yaml")
+    return paths
+
+
+def load_skillops_lanes() -> tuple[dict, str]:
+    for path in skillops_lanes_paths():
+        raw = load_yaml(path)
+        cfg = lanes_yaml_to_cfg(raw)
+        if cfg:
+            return cfg, str(path)
+    return {}, ""
+
+
 def merge(base: dict, overlay: dict) -> dict:
     out = dict(base)
     for key, val in overlay.items():
@@ -200,6 +323,13 @@ def limit_pct(block: dict | None, key: str) -> int | None:
 def collect() -> dict:
     sources = ["default"]
     cfg = load_json(DEFAULT_CONFIG)
+    skillops, skillops_path = load_skillops_lanes()
+    if skillops:
+        cfg = merge(cfg, skillops)
+        sources.append("skillops")
+        out_skillops = skillops_path
+    else:
+        out_skillops = ""
     user = load_json(USER_CONFIG)
     if user:
         cfg = merge(cfg, user)
@@ -217,10 +347,21 @@ def collect() -> dict:
     lanes = cfg.get("lanes") if isinstance(cfg.get("lanes"), dict) else {}
     effort = cfg.get("effort") if isinstance(cfg.get("effort"), dict) else {}
     research_name, research_bin, research_home = resolve_research(cfg)
+    providers_cfg = cfg.get("providers") if isinstance(cfg.get("providers"), dict) else {}
+    providers: dict = {}
+    for name, spec in providers_cfg.items():
+        if not isinstance(spec, dict):
+            continue
+        bin_name = spec.get("bin") or name
+        providers[name] = {
+            "bin": bin_map.get(bin_name) or which(bin_name) or "missing",
+            "home": expand(spec.get("home") or ""),
+        }
 
     out: dict = {
         "SKILL_DIR": str(SKILL_DIR),
         "CONFIG_SOURCES": "+".join(sources),
+        "SKILLOPS_LANES": out_skillops,
         "HOST": env_host(),
         "REPO": str(root) if root else "-",
         "CLAUDE_SESSION_SKIP_AT": int(cfg.get("claude_session_skip_at", 90)),
@@ -252,6 +393,9 @@ def collect() -> dict:
             },
         },
         "LANE_MECHANICAL_EFFORT": effort.get("mechanical", "low"),
+        "FALLBACKS": cfg.get("fallbacks") if isinstance(cfg.get("fallbacks"), dict) else {},
+        "PROVIDERS": providers,
+        "MODELS": cfg.get("models") if isinstance(cfg.get("models"), dict) else {},
         "IN_ORCA": in_orca_terminal(),
         "ORCA": "missing" if bin_map["orca"] == "missing" else "down",
         "APPROVE_FOR_ME": bool(cfg.get("approve_for_me", False)),

@@ -1,17 +1,17 @@
 # lane
 
-[Agent Skill](https://agentskills.io/specification) that splits a mixed request by model specialty and **dispatches** it. Version **0.7.0**. See [CHANGELOG](CHANGELOG.md).
+[Agent Skill](https://agentskills.io/specification) that splits a mixed request by model specialty and **dispatches** it. Version **0.9.1**. See [CHANGELOG](CHANGELOG.md).
 
 - Writing / second review → Grok-class CLI
 - Implementation / tests / terminal → Codex
 - Architecture / stuck debug → Claude
 - Long research → a cheap research CLI (Gemini or Hermes)
 
-The current chat does not spend its quota on another model's job. Each run writes a board at `~/.cache/lane/runs/<timestamp>/STATUS.md`.
+Ordinary chat does not wait for `/lane`. Mixed implement/docs/review/research is planned and executed automatically. Short questions and short on-lane edits stay in the current session. Each run writes a board at `~/.cache/lane/runs/<timestamp>/STATUS.md`.
 
-Works in Claude Code, Codex, Grok, MiniMax (coordinator only), Cursor, Gemini CLI, Hermes, and OpenCode. Orca is optional and used only inside an Orca terminal.
+Works in Claude Code, Codex, Grok, MiniMax (coordinator only), Cursor, Gemini CLI, Hermes, and OpenCode. Orca is optional and used only inside an Orca terminal. `always-on.md` is linked into `~/.grok/rules` and `~/.claude/rules`.
 
-`/lane plan` prints the assignment. `/lane` (or “나눠서”, “실행”) runs it. The coordinator session does `here` items only; other lanes go through `run.py --execute`.
+The coordinator session does `here` items only; other lanes go through `run.py --execute`. A dead worker is retried once on the same provider, then Qwen → MiniMax. Exhausted Codex impl does not spill onto Claude.
 
 ## Install
 
@@ -52,21 +52,24 @@ python3 scripts/run.py --plan ~/.cache/lane/last-plan.json --cwd "$PWD" --execut
 
 ```text
 ~/.cache/lane/runs/<timestamp>/
-  STATUS.md      board (table + per-lane spec)
+  STATUS.md      policy board (why, refused, limits)
+  AUDIT.md       plan audit stdout or skip reason
+  diff.patch     git diff given to review
   plan.json
   results.json
   prompts/       text sent to each worker
   logs/          CLI output after --execute
 ```
 
-`via: here` stays in the current session. `cli` sends the spec on stdin (`codex` / `claude` / `gemini`) or `--prompt-file` (`grok`). Inside an Orca terminal, `supervise` (default) uses `worker-start` + `worker_done`; `supervise: false` is a `worktree create` handoff. `skip` does not spill onto another paid CLI.
+`via: here` stays in the current session. `cli` sends the spec on stdin (`codex` / `claude` / `gemini`) or `--prompt-file` (`grok`). Audit and review use Grok `--permission-mode plan` (read-only). Inside an Orca terminal, `supervise` (default) uses `worker-start` + `worker_done`; `supervise: false` is a `worktree create` handoff. `skip` does not spill onto another paid CLI.
 
 ## Configure
 
 Defaults: `references/default-config.json`. Override without editing the skill:
 
-1. `~/.config/lane/config.json` — this machine
-2. `<repo>/.lane.json` — this project (wins)
+1. SkillOps `profiles/lanes.yaml` (or `SKILLOPS_LANES` / `~/.config/skillops/lanes.yaml`)
+2. `~/.config/lane/config.json` — this machine
+3. `<repo>/.lane.json` — this project (wins)
 
 See `references/config.example.json`. Useful keys: `supervise_default`, `claude_session_skip_at`, `grok_weekly_skip_at`, `never_spill_impl_to_claude`, `approve_for_me`, `lanes`, `providers`. Do not commit machine paths or secrets.
 

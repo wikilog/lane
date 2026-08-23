@@ -5,7 +5,7 @@
   "grok_weekly_skip_at": 90,
   "never_spill_impl_to_claude": true,
   "approve_for_me": false,
-  "never_assign": ["minimax", "maxi"],
+  "never_assign": ["maxi"],
   "lanes": {
     "write": "grok",
     "impl": "codex",
@@ -17,5 +17,33 @@
     "impl": "medium",
     "hard": "high",
     "mechanical": "low"
+  },
+  "models": {
+    "pin": false,
+    "claude_hard": "opus",
+    "claude_default": "sonnet",
+    "codex_mechanical": "gpt-5.6-luna"
+  },
+  "fallbacks": {
+    "impl": ["qwen", "minimax"],
+    "mechanical": ["qwen", "minimax"],
+    "hard": ["qwen", "minimax"],
+    "write": ["qwen", "minimax"],
+    "review": ["qwen", "minimax"],
+    "research": ["minimax"]
+  },
+  "providers": {
+    "minimax": {
+      "bin": "hermes",
+      "home": "~/.hermes-minimax"
+    },
+    "qwen": {
+      "bin": "hermes",
+      "home": "~/.hermes-qwen"
+    },
+    "hermes": {
+      "bin": "hermes",
+      "home": "~/.hermes-qwen"
+    }
   }
 }

@@ -40,8 +40,26 @@ def probe(
         "CLAUDE_SESSION_SKIP_AT": 90,
         "GROK_WEEKLY_SKIP_AT": 90,
         "NEVER_SPILL_IMPL_TO_CLAUDE": True,
-        "NEVER_ASSIGN": ["minimax", "maxi"],
+        "NEVER_ASSIGN": ["maxi"],
         "BINS": bins,
+        "FALLBACKS": {
+            "impl": ["qwen", "minimax"],
+            "mechanical": ["qwen", "minimax"],
+            "hard": ["qwen", "minimax"],
+            "write": ["qwen", "minimax"],
+            "review": ["qwen", "minimax"],
+            "research": ["minimax"],
+        },
+        "PROVIDERS": {
+            "minimax": {"bin": bins.get("hermes") or "missing", "home": "/tmp/hermes-minimax"},
+            "qwen": {"bin": bins.get("hermes") or "missing", "home": "/tmp/hermes-qwen"},
+        },
+        "MODELS": {
+            "pin": False,
+            "claude_hard": "opus",
+            "claude_default": "sonnet",
+            "codex_mechanical": "gpt-5.6-luna",
+        },
         "LANES": {
             "write": {"provider": "grok", "bin": bins["grok"], "effort": "default"},
             "impl": {"provider": "codex", "bin": bins["codex"], "effort": "medium"},
@@ -71,8 +89,11 @@ class PlanTests(unittest.TestCase):
 
     def test_mixed_from_grok_splits_three_ways(self):
         p = plan.build_plan(self.MIXED, probe("grok"), "run")
-        self.assertEqual(set(kinds(p)), {"impl", "write", "review"})
+        self.assertEqual(set(kinds(p)), {"impl", "write", "review", "audit"})
         self.assertEqual(item(p, "write")["via"], "here")
+        self.assertNotEqual(item(p, "audit")["via"], "here")
+        self.assertIn("audit never here", item(p, "audit")["reason"])
+        self.assertEqual(item(p, "impl")["needs"], ["audit"])
         self.assertNotEqual(item(p, "review")["provider"], "grok")
         self.assertNotEqual(item(p, "review")["via"], "here")
         self.assertEqual(item(p, "impl")["via"], "cli")
@@ -90,13 +111,18 @@ class PlanTests(unittest.TestCase):
     def test_codex_weekly_full_does_not_spill_impl_to_claude(self):
         p = plan.build_plan(self.MIXED, probe("grok", codex_weekly=100), "run")
         impl = item(p, "impl")
-        self.assertEqual(impl["via"], "skip")
-        self.assertIn("do not spill", impl["reason"])
+        self.assertEqual(impl["via"], "cli")
+        self.assertEqual(impl["provider"], "qwen")
+        self.assertTrue(impl.get("fallback"))
         self.assertNotEqual(impl["provider"], "claude")
+        self.assertIn("do not spill", impl["reason"])
 
-    def test_claude_session_full_skips_hard(self):
+    def test_claude_session_full_falls_back_to_qwen(self):
         p = plan.build_plan("아키텍처 설계 검토해 줘", probe("grok", claude_session=100), "run")
-        self.assertEqual(item(p, "hard")["via"], "skip")
+        hard = item(p, "hard")
+        self.assertEqual(hard["via"], "cli")
+        self.assertEqual(hard["provider"], "qwen")
+        self.assertTrue(hard.get("fallback"))
 
     def test_minimax_host_can_coordinate_but_is_never_a_worker(self):
         p = plan.build_plan(self.MIXED, probe("minimax", orca="down"), "run")
@@ -167,7 +193,50 @@ class PlanTests(unittest.TestCase):
         p = plan.build_plan(self.MIXED, data, "run")
         self.assertEqual(item(p, "impl")["via"], "skip")
         self.assertIn("fail closed", item(p, "impl")["reason"])
+        self.assertFalse(item(p, "impl").get("fallback"))
         self.assertEqual(item(p, "write")["via"], "here")
+
+    def test_grok_weekly_full_write_cli_falls_back_to_qwen(self):
+        data = probe("claude", grok_weekly=95)
+        p = plan.build_plan("README 초안만 다듬어 줘", data, "run")
+        write = item(p, "write")
+        self.assertEqual(write["via"], "cli")
+        self.assertEqual(write["provider"], "qwen")
+        self.assertTrue(write.get("fallback"))
+
+    def test_mechanical_keeps_cheap_codex_model(self):
+        p = plan.build_plan("lint 포맷만 맞춰 줘", probe("grok"), "run")
+        mech = item(p, "mechanical")
+        self.assertEqual(mech["provider"], "codex")
+        self.assertEqual(mech["model"], "gpt-5.6-luna")
+        self.assertEqual(mech["effort"], "low")
+
+    def test_fallback_impl_argv_is_hermes(self):
+        data = probe("grok", codex_weekly=100, in_orca=False)
+        p = plan.build_plan("버그 고쳐 줘", data, "run")
+        with tempfile.TemporaryDirectory() as td:
+            plan_path = Path(td) / "plan.json"
+            run_dir = Path(td) / "run"
+            proj = Path(td) / "proj"
+            proj.mkdir()
+            plan_path.write_text(json.dumps(p), encoding="utf-8")
+            import subprocess
+            out = subprocess.check_output(
+                [
+                    sys.executable,
+                    str(SCRIPTS / "run.py"),
+                    "--plan",
+                    str(plan_path),
+                    "--run-dir",
+                    str(run_dir),
+                    "--cwd",
+                    str(proj),
+                ],
+                text=True,
+            )
+            parsed = json.loads(out)
+            impl = next(r for r in parsed["results"] if r["kind"] == "impl")
+            self.assertEqual(impl["argv"][0], "hermes")
 
     def test_review_splits_off_impl_vendor(self):
         data = probe("codex")
@@ -235,7 +304,8 @@ class PlanTests(unittest.TestCase):
                 lane_run.main()
             parsed = json.loads(buf.getvalue())
             by = {r["kind"]: r["status"] for r in parsed["results"]}
-            self.assertTrue(str(by.get("impl", "")).startswith("exit"))
+            self.assertTrue(str(by.get("audit", "")).startswith("exit"))
+            self.assertEqual(by.get("impl"), "blocked")
             self.assertEqual(by.get("review"), "blocked")
 
     def test_cli_main_reads_prompt_file(self):
@@ -432,6 +502,201 @@ class PlanTests(unittest.TestCase):
     def test_dispatch_md_no_cat_prompt(self):
         text = (SCRIPTS.parent / "references" / "dispatch.md").read_text()
         self.assertNotIn("$(cat", text)
+
+    def test_skill_md_auto_dispatch_without_slash(self):
+        text = (SCRIPTS.parent / "SKILL.md").read_text()
+        self.assertIn("Do not wait for `/lane`", text)
+        self.assertIn("retry_chain", text)
+
+    def test_always_on_file_exists(self):
+        text = (SCRIPTS.parent / "always-on.md").read_text()
+        self.assertIn("probe.py", text)
+        self.assertIn("You are a /lane worker", text)
+
+    def test_retry_chain_is_qwen_then_minimax_not_claude(self):
+        p = plan.build_plan("버그 고쳐 줘", probe("grok"), "run")
+        chain = item(p, "impl")["retry_chain"]
+        names = [c["provider"] for c in chain]
+        self.assertEqual(names, ["qwen", "minimax"])
+        self.assertNotIn("claude", names)
+
+    def test_execute_retries_same_provider_then_fallback(self):
+        import io
+        import subprocess
+        from unittest.mock import patch
+        import run as lane_run
+        data = probe("grok", claude_session=10, codex_weekly=20)
+        p = plan.build_plan("버그 고쳐 줘", data, "run")
+        with tempfile.TemporaryDirectory() as td:
+            plan_path = Path(td) / "plan.json"
+            run_dir = Path(td) / "run"
+            proj = Path(td) / "proj"
+            proj.mkdir()
+            plan_path.write_text(json.dumps(p), encoding="utf-8")
+            seen = []
+
+            def fake_run(cmd, **kwargs):
+                if cmd and cmd[0] == "git":
+                    return subprocess.CompletedProcess(cmd, 0, stdout="/tmp\n", stderr="")
+                seen.append(cmd[0] if cmd else "")
+                if cmd and cmd[0] == "hermes":
+                    return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
+                return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="dead")
+
+            buf = io.StringIO()
+            argv = [
+                "run.py",
+                "--plan",
+                str(plan_path),
+                "--execute",
+                "--run-dir",
+                str(run_dir),
+                "--cwd",
+                str(proj),
+            ]
+            with patch.object(sys, "argv", argv), patch.object(
+                lane_run.subprocess, "run", side_effect=fake_run
+            ), patch("sys.stdout", buf):
+                lane_run.main()
+            parsed = json.loads(buf.getvalue())
+            impl = next(r for r in parsed["results"] if r["kind"] == "impl")
+            self.assertEqual(impl["status"], "ok")
+            self.assertEqual(impl["provider"], "qwen")
+            statuses = [a["provider"] for a in impl["attempts"]]
+            self.assertEqual(statuses[0], "codex")
+            self.assertEqual(statuses[1], "codex")
+            self.assertEqual(statuses[2], "qwen")
+            self.assertGreaterEqual(seen.count("codex"), 2)
+
+    def test_parse_lanes_yaml(self):
+        import probe as lane_probe
+        text = """
+schema_version: 1
+kind: lanes
+pin: false
+lanes:
+  impl: codex
+  hard: claude
+fallbacks:
+  impl:
+    - qwen
+    - minimax
+"""
+        data = lane_probe.parse_simple_yaml(text)
+        cfg = lane_probe.lanes_yaml_to_cfg(data)
+        self.assertEqual(cfg["lanes"]["impl"], "codex")
+        self.assertEqual(cfg["fallbacks"]["impl"], ["qwen", "minimax"])
+        self.assertFalse(cfg["models"]["pin"])
+
+    def test_manual_config_wins_over_skillops_yaml(self):
+        import probe as lane_probe
+        base = {"lanes": {"impl": "codex"}, "models": {"pin": False}}
+        skillops = {"lanes": {"impl": "grok"}, "models": {"pin": True}}
+        user = {"lanes": {"impl": "claude"}}
+        out = lane_probe.merge(lane_probe.merge(base, skillops), user)
+        self.assertEqual(out["lanes"]["impl"], "claude")
+        self.assertTrue(out["models"]["pin"])
+
+    def test_lone_impl_has_no_audit(self):
+        p = plan.build_plan("버그 고쳐 줘", probe("grok"), "run")
+        self.assertNotIn("audit", kinds(p))
+
+    def test_grok_weekly_skips_audit_without_blocking_impl(self):
+        p = plan.build_plan(self.MIXED, probe("grok", grok_weekly=95), "run")
+        audit = item(p, "audit")
+        self.assertEqual(audit["via"], "skip")
+        self.assertIn("grok weekly", audit["reason"])
+        self.assertNotIn("audit", item(p, "impl")["needs"])
+        self.assertNotEqual(item(p, "impl")["via"], "skip")
+
+    def test_parse_verdict_pass_and_garbage(self):
+        import run as lane_run
+        ok = lane_run.parse_verdict('{"verdict":"pass","notes":"ok"}')
+        self.assertEqual(ok["verdict"], "pass")
+        wrapped = lane_run.parse_verdict('hello\n{"verdict":"fail","notes":"x"}\n')
+        self.assertEqual(wrapped["verdict"], "fail")
+        self.assertIsNone(lane_run.parse_verdict("not json at all"))
+
+    def test_write_diff_includes_untracked(self):
+        import subprocess
+        import run as lane_run
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            repo.mkdir()
+            subprocess.check_call(["git", "init"], cwd=str(repo), stdout=subprocess.DEVNULL)
+            subprocess.check_call(["git", "config", "user.email", "t@t.t"], cwd=str(repo))
+            subprocess.check_call(["git", "config", "user.name", "t"], cwd=str(repo))
+            (repo / "a.txt").write_text("a\n", encoding="utf-8")
+            subprocess.check_call(["git", "add", "a.txt"], cwd=str(repo))
+            subprocess.check_call(["git", "commit", "-m", "a"], cwd=str(repo), stdout=subprocess.DEVNULL)
+            (repo / "a.txt").write_text("b\n", encoding="utf-8")
+            (repo / "new.txt").write_text("n\n", encoding="utf-8")
+            dest = Path(td) / "diff.patch"
+            lane_run.write_diff(repo, dest)
+            text = dest.read_text(encoding="utf-8")
+            self.assertIn("a.txt", text)
+            self.assertIn("new.txt", text)
+
+    def test_status_board_shows_policy_and_refused(self):
+        data = probe("grok", in_orca=False, codex_weekly=100)
+        p = plan.build_plan(self.MIXED, data, "run")
+        with tempfile.TemporaryDirectory() as td:
+            plan_path = Path(td) / "plan.json"
+            run_dir = Path(td) / "run"
+            proj = Path(td) / "proj"
+            proj.mkdir()
+            plan_path.write_text(json.dumps(p), encoding="utf-8")
+            import subprocess
+            subprocess.check_output(
+                [
+                    sys.executable,
+                    str(SCRIPTS / "run.py"),
+                    "--plan",
+                    str(plan_path),
+                    "--run-dir",
+                    str(run_dir),
+                    "--cwd",
+                    str(proj),
+                ],
+                text=True,
+            )
+            board = (run_dir / "STATUS.md").read_text(encoding="utf-8")
+            self.assertIn("skip not spill", board)
+            self.assertIn("| why |", board)
+            self.assertIn("## Refused", board)
+            self.assertIn("do not spill", board.lower())
+            self.assertIn("## Limits", board)
+
+    def test_grok_review_uses_plan_permission(self):
+        data = probe("claude", in_orca=False)
+        p = plan.build_plan("버그 고치고 리뷰해 줘", data, "run")
+        self.assertEqual(item(p, "review")["provider"], "grok")
+        with tempfile.TemporaryDirectory() as td:
+            plan_path = Path(td) / "plan.json"
+            run_dir = Path(td) / "run"
+            proj = Path(td) / "proj"
+            proj.mkdir()
+            plan_path.write_text(json.dumps(p), encoding="utf-8")
+            import subprocess
+            out = subprocess.check_output(
+                [
+                    sys.executable,
+                    str(SCRIPTS / "run.py"),
+                    "--plan",
+                    str(plan_path),
+                    "--run-dir",
+                    str(run_dir),
+                    "--cwd",
+                    str(proj),
+                ],
+                text=True,
+            )
+            parsed = json.loads(out)
+            review = next(r for r in parsed["results"] if r["kind"] == "review")
+            self.assertIn("--permission-mode", review["argv"])
+            mode = review["argv"][review["argv"].index("--permission-mode") + 1]
+            self.assertEqual(mode, "plan")
+            self.assertIn("diff.patch", review["spec"])
 
 
 if __name__ == "__main__":

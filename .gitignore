@@ -10,3 +10,5 @@ venv/
 .pytest_cache/
 .coverage
 htmlcov/
+.python-version
+.mypy_cache/

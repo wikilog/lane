@@ -11,8 +11,31 @@
     "hard": "claude",
     "research": "hermes"
   },
+  "never_assign": ["maxi"],
+  "models": {
+    "pin": false,
+    "claude_hard": "opus",
+    "claude_default": "sonnet",
+    "codex_mechanical": "gpt-5.6-luna"
+  },
+  "fallbacks": {
+    "impl": ["qwen", "minimax"],
+    "mechanical": ["qwen", "minimax"],
+    "hard": ["qwen", "minimax"],
+    "write": ["qwen", "minimax"],
+    "review": ["qwen", "minimax"],
+    "research": ["minimax"]
+  },
   "providers": {
     "hermes": {
+      "bin": "hermes",
+      "home": "~/.hermes-qwen"
+    },
+    "minimax": {
+      "bin": "hermes",
+      "home": "~/.hermes-minimax"
+    },
+    "qwen": {
       "bin": "hermes",
       "home": "~/.hermes-qwen"
     }

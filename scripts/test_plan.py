@@ -561,6 +561,53 @@ class PlanTests(unittest.TestCase):
         self.assertIsNone(item["model"])
         self.assertIsNone(item["home"])
 
+    def test_default_fallbacks_skip_alibaba_and_minimax(self):
+        for kind, chain in plan.DEFAULT_FALLBACKS.items():
+            self.assertFalse({"qwen", "minimax", "hermes"} & set(chain), kind)
+        self.assertNotIn("qwen", plan.REVIEW_FALLBACK)
+
+    def test_review_retry_chain_excludes_impl_vendor(self):
+        data = probe("claude", grok_weekly=100)
+        data["FALLBACKS"] = dict(plan.DEFAULT_FALLBACKS)
+        p = plan.build_plan("코드 구현하고 리뷰해줘", data, "run")
+        impl = next(i for i in p["items"] if i["kind"] == "impl")
+        review = next(i for i in p["items"] if i["kind"] == "review")
+        self.assertNotEqual(review["provider"], impl["provider"])
+        self.assertNotIn(impl["provider"], [c["provider"] for c in review["retry_chain"]])
+
+    def test_review_moves_off_vendors_that_touched_impl(self):
+        import run as lane_run
+        review = {"kind": "review", "provider": "grok", "via": "cli", "model": "x",
+                  "retry_chain": [{"provider": "codex", "via": "cli"}, {"provider": "claude", "via": "cli"}]}
+        out = lane_run.independent_review(review, {"grok"})
+        self.assertEqual(out["provider"], "codex")
+        self.assertNotIn("model", out)
+        self.assertEqual([c["provider"] for c in out["retry_chain"]], ["claude"])
+        out2 = lane_run.independent_review(review, {"grok", "codex"})
+        self.assertEqual(out2["provider"], "claude")
+        self.assertIs(lane_run.independent_review(review, set()), review)
+
+    def test_review_without_independent_vendor_is_blocked_not_skipped(self):
+        import run as lane_run
+        review = {"kind": "review", "provider": "grok", "via": "cli", "retry_chain": []}
+        out = lane_run.independent_review(review, {"grok"})
+        self.assertTrue(out.get("blocked_reason"))
+        self.assertNotEqual(out.get("via"), "skip")
+
+    def test_impl_vendors_counts_every_attempt(self):
+        import run as lane_run
+        rec = {"kind": "impl", "provider": "grok", "status": "ok",
+               "attempts": [{"provider": "codex", "status": "timeout"}, {"provider": "grok", "status": "ok"}]}
+        self.assertEqual(lane_run.impl_vendors(rec), {"codex", "grok"})
+
+    def test_research_auto_prefers_grok_over_hermes(self):
+        import probe as lane_probe
+        from unittest.mock import patch
+        have = {"hermes": "/usr/bin/hermes", "grok": "/usr/bin/grok"}
+        with patch.object(lane_probe, "which", side_effect=lambda n: have.get(n)):
+            name, _, _ = lane_probe.resolve_research({"providers": {}})
+        self.assertEqual(name, "grok")
+
     def test_execute_retries_same_provider_then_fallback(self):
         import io
         import subprocess

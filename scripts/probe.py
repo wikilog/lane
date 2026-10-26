@@ -298,7 +298,7 @@ def resolve_research(cfg: dict) -> tuple[str, str, str]:
         home = expand(spec.get("home") or "")
         found = which(bin_name)
         return lane, found or "missing", home
-    for name in ("gemini", "hermes", "grok"):
+    for name in ("gemini", "grok", "hermes"):  # hermes 기본 홈은 alibaba(무료 한도 소진)라 grok 다음
         found = which(name)
         if found:
             home = ""

@@ -25,12 +25,12 @@
     "codex_mechanical": "gpt-5.6-luna"
   },
   "fallbacks": {
-    "impl": ["qwen", "minimax"],
-    "mechanical": ["qwen", "minimax"],
-    "hard": ["qwen", "minimax"],
-    "write": ["qwen", "minimax"],
-    "review": ["qwen", "minimax"],
-    "research": ["minimax"]
+    "impl": ["grok"],
+    "mechanical": ["grok"],
+    "hard": ["grok"],
+    "write": ["codex"],
+    "review": ["codex", "grok"],
+    "research": ["grok"]
   },
   "providers": {
     "minimax": {

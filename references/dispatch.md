@@ -42,9 +42,9 @@ grok --prompt-file "$PROMPT_FILE" --permission-mode acceptEdits --cwd "<repo>"
 grok --prompt-file "$PROMPT_FILE" --permission-mode plan --cwd "<repo>"
 ```
 
-**fallback** when the primary is exhausted or the binary is missing (not when limits are unknown), and when a worker dies. Same provider once, then DeepSeek V4 Flash → MiniMax. `HERMES_HOME` from the plan item. Never spill impl to Claude.
+**fallback** when the primary is exhausted or the binary is missing (not when limits are unknown), and when a worker dies. Same provider once, then the `fallbacks` list (default: impl/mechanical/hard/research → grok, write → codex, review → codex → grok minus the impl vendor). `HERMES_HOME` from the plan item. Never spill impl to Claude.
 
-- impl/mechanical/hard/write/review → `~/.hermes-deepseek` (deepseek-v4-flash-0731), then `~/.hermes-minimax` (MiniMax-M3)
+- qwen (`~/.hermes-deepseek`) and minimax (`~/.hermes-minimax`) stay defined as providers but are off by default since 2026-10-26 (alibaba free tier exhausted, MiniMax retired). Add them back to `fallbacks` in `~/.config/lane/config.json` to use them.
 
 **research** — use `LANE_RESEARCH_BIN` from probe.
 

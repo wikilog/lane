@@ -596,6 +596,30 @@ def run_attempts(
     return code, stdout, stderr, status, attempts
 
 
+def impl_vendors(rec: dict) -> set:
+    """impl 을 시도한 모든 공급자(실패·시간 초과 포함). 실패 전에 파일을 고쳤을 수 있어 review 에서 뺀다."""
+    out = {a.get("provider") for a in rec.get("attempts") or []}
+    out.add(rec.get("provider"))
+    return {v for v in out if v}
+
+
+def independent_review(item: dict, used: set) -> dict:
+    """impl 에 손댄 공급자와 review 공급자가 겹치지 않게 한다. 남는 후보가 없으면 막는다(검토 없이 통과시키지 않음)."""
+    if item.get("kind") != "review" or not used:
+        return item
+    chain = [c for c in item.get("retry_chain") or [] if c.get("provider") not in used]
+    if item.get("provider") not in used:
+        return dict(item, retry_chain=chain)
+    if not chain:
+        return dict(item, blocked_reason=f"no independent review vendor (impl touched by {','.join(sorted(used))})")
+    out = {k: v for k, v in item.items() if k not in ("model", "home")}
+    out.update(chain[0])
+    out["retry_chain"] = chain[1:]
+    out["fallback"] = True
+    out["reason"] = f"review moved off impl vendor {','.join(sorted(used))}"
+    return out
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Dispatch a /lane plan")
     parser.add_argument("--plan", required=True, help="plan JSON path, or - for stdin")
@@ -667,6 +691,11 @@ def main() -> None:
             "retry_chain": item.get("retry_chain") or [],
             "fallback": bool(item.get("fallback")),
         }
+        if item.get("blocked_reason"):
+            rec["status"] = "blocked"
+            rec["reason"] = item["blocked_reason"]
+            failed.add(item["kind"])
+            return rec
         blocked_by = [n for n in rec["needs"] if n in failed]
         if blocked_by:
             rec["status"] = "blocked"
@@ -742,8 +771,12 @@ def main() -> None:
             failed.add(item["kind"])
         return rec
 
+    touched: set = set()
     for item in ready_order(plan.get("items") or []):
+        item = independent_review(item, touched)
         rec = run_item(item)
+        if rec.get("kind") == "impl":
+            touched |= impl_vendors(rec)
         if rec.get("kind") == "audit":
             write_audit(rec)
         if (
@@ -769,11 +802,12 @@ def main() -> None:
                 impl_src["spec"] = (impl_src.get("spec") or "") + f"\nRework after review {rec.get('verdict')}: {notes}"
                 failed.discard("impl")
                 impl2 = run_item(impl_src)
+                touched |= impl_vendors(impl2)
                 impl.update(impl2)
                 if impl2.get("status") == "ok":
                     write_diff(Path(impl_src["repo"]).expanduser().resolve() if impl_src.get("repo") else repo, patch)
                     failed.discard("review")
-                    rec = run_item(item)
+                    rec = run_item(independent_review(item, touched))
                     apply_review(rec)
                 if rec.get("verdict") != "pass":
                     rec["status"] = "blocked"

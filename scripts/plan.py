@@ -69,15 +69,17 @@ HOST_LANE = {
     "opencode": "impl",
 }
 
-REVIEW_FALLBACK = ("grok", "claude", "qwen")
+REVIEW_FALLBACK = ("grok", "claude", "codex")
 
+# 2026-10-26: alibaba(qwen·deepseek)는 무료 한도 소진, MiniMax는 사용 중단이라 기본 대체를 다른 벤더 CLI로.
+# hard 는 model(opus)이 따라가도 grok 실행기가 무시해 grok만 둔다. review 는 impl 벤더를 retry_chain_for 가 뺀다.
 DEFAULT_FALLBACKS = {
-    "impl": ["qwen", "minimax"],
-    "mechanical": ["qwen", "minimax"],
-    "hard": ["qwen", "minimax"],
-    "write": ["qwen", "minimax"],
-    "review": ["qwen", "minimax"],
-    "research": ["minimax"],
+    "impl": ["grok"],
+    "mechanical": ["grok"],
+    "hard": ["grok"],
+    "write": ["codex"],
+    "review": ["codex", "grok"],
+    "research": ["grok"],
 }
 
 HERMES_PROVIDERS = {"hermes", "minimax", "qwen"}
@@ -272,13 +274,13 @@ def apply_fallback(item: dict, data: dict) -> dict:
     return item
 
 
-def retry_chain_for(item: dict, data: dict) -> list[dict]:
+def retry_chain_for(item: dict, data: dict, avoid: frozenset = frozenset()) -> list[dict]:
     chain = (data.get("FALLBACKS") or DEFAULT_FALLBACKS).get(item.get("kind") or "") or []
     host = (data.get("HOST") or "").lower()
     current = item.get("provider")
     never_claude = item.get("kind") in {"impl", "mechanical"} and data.get("NEVER_SPILL_IMPL_TO_CLAUDE", True)
     out: list[dict] = []
-    seen = {current}
+    seen = {current, *avoid}
     for name in chain:
         if name in seen or name.lower() == host:
             continue
@@ -484,9 +486,11 @@ def build_plan(text: str, data: dict, mode: str) -> dict:
                 item["model"] = models.get("claude_default") or "sonnet"
         items.append(apply_fallback(apply_gates(item, data), data))
     separate_review_vendor(items, data, host, orca, in_orca)
+    impl_vendor = next((i["provider"] for i in items if i["kind"] == "impl"), None)
     for item in items:
         apply_fallback(apply_gates(item, data), data)
-        item["retry_chain"] = retry_chain_for(item, data)
+        avoid = frozenset({impl_vendor} if item["kind"] == "review" and impl_vendor else ())
+        item["retry_chain"] = retry_chain_for(item, data, avoid)
     maybe_attach_audit(items, data, host, orca, in_orca)
     attach_needs(items)
     return {

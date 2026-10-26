@@ -191,10 +191,10 @@ def collect(offline: bool = False) -> dict:
             "impl": "codex family default (unpinned, sol-class)",
             "mechanical": observed.get("codex_cheap") or "codex cheap tier",
             "hard": "claude opus alias",
-            "research": "qwen3.8-max via hermes-qwen",
-            "fallback_impl": "qwen3.8-max then MiniMax-M3",
-            "fallback_hard": "qwen3.8-max then MiniMax-M3",
-            "fallback_write": "qwen3.8-max then MiniMax-M3",
+            "research": "grok (auto: gemini → grok → hermes)",
+            "fallback_impl": "grok",
+            "fallback_hard": "grok",
+            "fallback_write": "codex",
         },
     }
 
@@ -213,19 +213,20 @@ def render_matrix(snap: dict) -> str:
 |----|------|--------|------|------|
 | hermes | Marcus | Grok CLI default (관측: {obs.get("grok_default") or "grok"}) | 지식 작업·오케스트레이션·리뷰 | 1순위 글쓰기·리뷰 |
 | dewa | Dewa | Codex CLI default (관측: {obs.get("codex_default") or "sol-class"}) | 터미널·에이전트 코딩 | 1순위 구현 |
-| orion | Orion | {obs.get("qwen") or "qwen3.8-max"} | 다국어 리서치·장시간 기획 | 1순위 리서치, 모든 레인 1차 폴백 |
-| maxi | Maxi | {obs.get("minimax") or "MiniMax-M3"} | 저비용 코딩·긴 컨텍스트 | Qwen 다음 폴백. 1순위 배정 없음 |
+| orion | Orion | {obs.get("qwen") or "qwen3.8-max"} | 다국어 리서치·장시간 기획 | 쉼 (alibaba 무료 한도 소진, 2026-10-26) |
+| maxi | Maxi | {obs.get("minimax") or "MiniMax-M3"} | 저비용 코딩·긴 컨텍스트 | 쉼 (사용 중단, 2026-10-26) |
 | nova | Nova | — | — | 폐기 |
 
 ## 레인
 
 | 레인 | 1순위 | 모델 지정 | 폴백 (한도 소진·바이너리 없음) |
 |------|-------|-----------|--------------------------------|
-| write / review | grok | 생략 (CLI default) | qwen → minimax |
-| impl | codex | 생략 (CLI default) | qwen → minimax |
-| mechanical | codex | `{obs.get("codex_cheap") or "gpt-5.6-luna"}` (저비용 티어) | qwen → minimax |
-| hard | claude | `{obs.get("claude_hard") or "opus"}` 패밀리 별칭 | qwen → minimax |
-| research | hermes-qwen | 홈 기본값 | minimax |
+| write | grok | 생략 (CLI default) | codex |
+| review | grok | 생략 (CLI default) | codex → grok (impl 벤더 제외) |
+| impl | codex | 생략 (CLI default) | grok |
+| mechanical | codex | `{obs.get("codex_cheap") or "gpt-5.6-luna"}` (저비용 티어) | grok |
+| hard | claude | `{obs.get("claude_hard") or "opus"}` 패밀리 별칭 | grok |
+| research | auto (gemini → grok → hermes) | 홈 기본값 | grok |
 
 Claude impl로 넘기지 않는다. MiniMax 호스트 세션은 코디네이터만 하고 `via=here` 워커가 되지 않는다.
 

@@ -11,7 +11,7 @@ Ordinary chat does not wait for `/lane`. Mixed implement/docs/review/research is
 
 Works in Claude Code, Codex, Grok, MiniMax (coordinator only), Cursor, Gemini CLI, Hermes, and OpenCode. Orca is optional and used only inside an Orca terminal. `always-on.md` is linked into `~/.grok/rules` and `~/.claude/rules`.
 
-The coordinator session does `here` items only; other lanes go through `run.py --execute`. A dead worker is retried once on the same provider, then Qwen → MiniMax. Exhausted Codex impl does not spill onto Claude.
+The coordinator session does `here` items only; other lanes go through `run.py --execute`. A dead worker is retried once on the same provider, then the `fallbacks` list (default grok for impl/hard/research, codex for write, codex → grok for review). Exhausted Codex impl does not spill onto Claude.
 
 ## Install
 

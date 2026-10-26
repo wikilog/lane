@@ -42,7 +42,7 @@ grok --prompt-file "$PROMPT_FILE" --permission-mode acceptEdits --cwd "<repo>"
 grok --prompt-file "$PROMPT_FILE" --permission-mode plan --cwd "<repo>"
 ```
 
-**fallback** when the primary is exhausted or the binary is missing (not when limits are unknown), and when a worker dies. Same provider once, then Qwen → MiniMax. `HERMES_HOME` from the plan item. Never spill impl to Claude.
+**fallback** when the primary is exhausted or the binary is missing (not when limits are unknown), and when a worker dies. Same provider once, then DeepSeek V4 Flash → MiniMax. `HERMES_HOME` from the plan item. Never spill impl to Claude.
 
 - impl/mechanical/hard/write/review → `~/.hermes-deepseek` (deepseek-v4-flash-0731), then `~/.hermes-minimax` (MiniMax-M3)
 

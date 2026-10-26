@@ -572,6 +572,7 @@ def run_attempts(
             item["provider"] = current.get("provider")
             item["via"] = current.get("via")
             item["home"] = current.get("home")
+            item["model"] = current.get("model")
             item["reason"] = current.get("reason")
             if current.get("fallback"):
                 item["fallback"] = True
@@ -583,7 +584,8 @@ def run_attempts(
             nxt = chain[chain_i]
             chain_i += 1
             prev = current.get("provider")
-            current = dict(item)
+            # model·home 은 앞 공급자 것이라 다음 공급자에 넘기지 않는다(chain 항목에 있으면 그것을 쓴다)
+            current = {k: v for k, v in item.items() if k not in ("model", "home")}
             current.update(nxt)
             current["via"] = nxt.get("via") or "cli"
             current["fallback"] = True
@@ -749,7 +751,7 @@ def main() -> None:
             and args.execute
             and rec.get("status") == "ok"
         ):
-            write_diff(repo, patch)
+            write_diff(Path(item["repo"]).expanduser().resolve() if item.get("repo") else repo, patch)
         if rec.get("kind") == "review" and args.execute and rec.get("status") not in {
             "skipped",
             "blocked",
@@ -769,7 +771,7 @@ def main() -> None:
                 impl2 = run_item(impl_src)
                 impl.update(impl2)
                 if impl2.get("status") == "ok":
-                    write_diff(repo, patch)
+                    write_diff(Path(impl_src["repo"]).expanduser().resolve() if impl_src.get("repo") else repo, patch)
                     failed.discard("review")
                     rec = run_item(item)
                     apply_review(rec)

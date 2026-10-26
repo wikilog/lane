@@ -520,6 +520,47 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(names, ["qwen", "minimax"])
         self.assertNotIn("claude", names)
 
+    def test_retry_chain_drops_previous_provider_model_and_home(self):
+        from unittest.mock import patch
+        import run as lane_run
+        item = {"kind": "impl", "provider": "qwen", "via": "cli", "home": "/tmp/deepseek",
+                "model": "deepseek-v4-flash-0731",
+                "retry_chain": [{"provider": "codex", "via": "cli"}]}
+        seen = []
+
+        def fake_execute(rec, repo, timeout, env, run_bound):
+            seen.append((rec["argv"], env.get("HERMES_HOME")))
+            return 1, "", "dead"
+
+        log = type("Log", (), {"write_text": lambda *a, **k: None})()
+        with patch.object(lane_run, "execute_item", fake_execute):
+            lane_run.run_attempts(item, {}, repo=Path.cwd(), prompt_path=Path("/tmp/prompt"),
+                                  prompt_text="t", approve=False, supervise=False, goal="t",
+                                  timeout=1, env={}, run_bound=[False], log_path=log)
+        argv, home = seen[-1]
+        self.assertEqual(argv[0], "codex")
+        self.assertNotIn("deepseek-v4-flash-0731", argv)
+        self.assertIsNone(home)
+
+    def test_retry_success_updates_item_model(self):
+        from unittest.mock import patch
+        import run as lane_run
+        item = {"kind": "impl", "provider": "qwen", "via": "cli", "home": "/tmp/deepseek",
+                "model": "deepseek-v4-flash-0731",
+                "retry_chain": [{"provider": "codex", "via": "cli"}]}
+
+        def fake_execute(rec, repo, timeout, env, run_bound):
+            return (0, "ok", "") if rec["argv"][0] == "codex" else (1, "", "dead")
+
+        log = type("Log", (), {"write_text": lambda *a, **k: None})()
+        with patch.object(lane_run, "execute_item", fake_execute):
+            lane_run.run_attempts(item, {}, repo=Path.cwd(), prompt_path=Path("/tmp/prompt"),
+                                  prompt_text="t", approve=False, supervise=False, goal="t",
+                                  timeout=1, env={}, run_bound=[False], log_path=log)
+        self.assertEqual(item["provider"], "codex")
+        self.assertIsNone(item["model"])
+        self.assertIsNone(item["home"])
+
     def test_execute_retries_same_provider_then_fallback(self):
         import io
         import subprocess

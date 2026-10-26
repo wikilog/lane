@@ -18,7 +18,7 @@ metadata:
 
 # /lane
 
-Coordinator only. MiniMax host sessions coordinate; they are not `via=here` workers. MiniMax-M3 and Qwen 3.8-Max are fallback workers when a primary lane is exhausted or missing, or when a worker dies. This session does only `here` items. Everything else is `run.py --execute`.
+Coordinator only. MiniMax host sessions coordinate; they are not `via=here` workers. MiniMax-M3 and DeepSeek V4 Flash 0731 are fallback workers when a primary lane is exhausted or missing, or when a worker dies. This session does only `here` items. Everything else is `run.py --execute`.
 
 Do not wait for `/lane`. If the user asked for work that `plan.py` would split or send off-host, run the path below and execute. Stay in this session only when every item is `via=here` (short on-lane edit) or the request is a question with no file work.
 
@@ -37,7 +37,7 @@ python3 "$DIR/scripts/run.py" --plan "$HOME/.cache/lane/last-plan.json" --cwd "$
 1. Print `STATUS.md` from the JSON `run_dir` (the board).
 2. `/lane plan` or `/route-model` → stop after the plan. Do not execute.
 3. Ordinary work, `/lane`, 나눠서, 실행 → `run.py --execute --cwd "$PWD"`. Then do every `coordinator` (`here`) item yourself. Do not implement `cli` / `orca` items in this session.
-4. `run.py` retries a dead worker once on the same provider, then walks `retry_chain` (Qwen then MiniMax). It does not spill impl to Claude. Stop if STATUS still shows `blocked` after those retries. One verify pass after workers, different vendor from impl.
+4. `run.py` retries a dead worker once on the same provider, then walks `retry_chain` (DeepSeek V4 Flash then MiniMax). It does not spill impl to Claude. Stop if STATUS still shows `blocked` after those retries. One verify pass after workers, different vendor from impl.
 
 Do not load dispatch.md unless `run.py` is missing.
 
@@ -53,7 +53,7 @@ Config merge, later wins: skill package defaults → SkillOps `profiles/lanes.ya
 
 `supervise: true` (default in an Orca terminal) → `worker-start` + `worker_done`. `supervise: false` → `worktree create` handoff.
 
-Gates: missing bin; Codex weekly 100% (no Claude spill → Qwen then MiniMax); Claude session ≥ skip_at → Qwen then MiniMax; Grok weekly ≥ skip_at for write CLI → Qwen then MiniMax; **that provider's** limits unknown → skip impl/hard CLI (no fallback); never_assign (`maxi` only); review vendor ≠ impl **and** ≠ host.
+Gates: missing bin; Codex weekly 100% (no Claude spill → DeepSeek then MiniMax); Claude session ≥ skip_at → DeepSeek then MiniMax; Grok weekly ≥ skip_at for write CLI → DeepSeek then MiniMax; **that provider's** limits unknown → skip impl/hard CLI (no fallback); never_assign (`maxi` only); review vendor ≠ impl **and** ≠ host.
 
 When the plan has `impl` plus another item, add `audit` (write CLI, never `here`). Grok weekly skip on audit does not block execute. Review reads `diff.patch`, not the worker summary. Unparsed review cannot pass. One impl rework after fail, then `blocked`. No score loop.
 

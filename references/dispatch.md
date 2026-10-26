@@ -44,7 +44,7 @@ grok --prompt-file "$PROMPT_FILE" --permission-mode plan --cwd "<repo>"
 
 **fallback** when the primary is exhausted or the binary is missing (not when limits are unknown), and when a worker dies. Same provider once, then Qwen → MiniMax. `HERMES_HOME` from the plan item. Never spill impl to Claude.
 
-- impl/mechanical/hard/write/review → `~/.hermes-qwen` (qwen3.8-max), then `~/.hermes-minimax` (MiniMax-M3)
+- impl/mechanical/hard/write/review → `~/.hermes-deepseek` (deepseek-v4-flash-0731), then `~/.hermes-minimax` (MiniMax-M3)
 
 **research** — use `LANE_RESEARCH_BIN` from probe.
 

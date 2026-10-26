@@ -39,11 +39,11 @@
     },
     "qwen": {
       "bin": "hermes",
-      "home": "~/.hermes-qwen"
+      "home": "~/.hermes-deepseek"
     },
     "hermes": {
       "bin": "hermes",
-      "home": "~/.hermes-qwen"
+      "home": "~/.hermes-deepseek"
     }
   }
 }

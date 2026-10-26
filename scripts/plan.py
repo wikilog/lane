@@ -83,8 +83,14 @@ DEFAULT_FALLBACKS = {
 HERMES_PROVIDERS = {"hermes", "minimax", "qwen"}
 FALLBACK_HOMES = {
     "minimax": "~/.hermes-minimax",
-    "qwen": "~/.hermes-qwen",
-    "hermes": "~/.hermes-qwen",
+    "qwen": "~/.hermes-deepseek",
+    "hermes": "~/.hermes-deepseek",
+}
+# qwen fallback shares the hermes-deepseek home with the research primary (deepseek-v4-pro-0813
+# by default in ~/.hermes-deepseek/config.yaml); override to the cheaper model on fallback calls
+# since hermes chat -m takes precedence over the home's config default.
+FALLBACK_MODELS = {
+    "qwen": "deepseek-v4-flash-0731",
 }
 
 
@@ -253,6 +259,8 @@ def apply_fallback(item: dict, data: dict) -> dict:
             item["home"] = spec["home"]
         else:
             item.pop("home", None)
+        if name in FALLBACK_MODELS:
+            item["model"] = FALLBACK_MODELS[name]
         item["reason"] = f"fallback {name} after {reason}"
         if name == "grok":
             item["lane"] = "write"
@@ -283,6 +291,8 @@ def retry_chain_for(item: dict, data: dict) -> list[dict]:
         entry = {"provider": name, "via": "cli"}
         if spec.get("home"):
             entry["home"] = spec["home"]
+        if name in FALLBACK_MODELS:
+            entry["model"] = FALLBACK_MODELS[name]
         out.append(entry)
     return out
 

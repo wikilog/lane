@@ -75,21 +75,26 @@ def pointer(prompt_path: Path) -> str:
 
 
 def orca_supervise_steps(item: dict, goal: str) -> list[list[str]]:
+    # "current" resolves against the *invoking process's* cwd (not a fixed
+    # session concept) — execute_item passes item.get("repo") or the run's
+    # --cwd as that subprocess cwd, so a per-item "repo" field is enough to
+    # target a different repo per item within one multi-repo /lane batch.
+    worker_start = [
+        "orca",
+        "orchestration",
+        "worker-start",
+        "--task",
+        "<task_id>",
+        "--worktree",
+        "current",
+        "--agent",
+        item["provider"],
+        "--json",
+    ]
     return [
         ["orca", "orchestration", "run-create", "--objective", goal or "lane", "--json"],
         ["orca", "orchestration", "task-create", "--spec", item.get("spec") or "", "--json"],
-        [
-            "orca",
-            "orchestration",
-            "worker-start",
-            "--task",
-            "<task_id>",
-            "--worktree",
-            "current",
-            "--agent",
-            item["provider"],
-            "--json",
-        ],
+        worker_start,
         [
             "orca",
             "orchestration",
@@ -151,11 +156,12 @@ def argv_for(
                 str(repo),
                 "-s",
                 "read-only" if readonly else "workspace-write",
-                "-c",
-                f'model_reasoning_effort="{effort}"',
-                "-",
             ]
         )
+        # "default"는 lane 설정의 "모델 기본값"이라 codex 에 넘기면 Invalid value 로 실패한다(write→codex 대체 때)
+        if effort != "default":
+            cmd.extend(["-c", f'model_reasoning_effort="{effort}"'])
+        cmd.append("-")
         return cmd, prompt_text, None
     if provider == "claude":
         model = item.get("model") or (
@@ -183,7 +189,7 @@ def argv_for(
     if provider == "gemini":
         return ["gemini", "-p"], prompt_text, None
     if provider in {"hermes", "minimax", "qwen"} or item.get("home"):
-        return [
+        cmd = [
             "hermes",
             "chat",
             "-q",
@@ -191,7 +197,11 @@ def argv_for(
             "-Q",
             "--in",
             str(repo),
-        ], None, None
+        ]
+        model = item.get("model")
+        if model:
+            cmd.extend(["-m", str(model)])
+        return cmd, None, None
     return None, None, None
 
 
@@ -526,8 +536,13 @@ def run_attempts(
     stderr = ""
     status = "no-argv"
     chunks: list[str] = []
+    # An item may name its own target repo (multi-repo /lane batch); "current"
+    # in orca_supervise_steps resolves against whatever cwd we run orca with,
+    # so route that item to its own repo instead of the run's global --cwd.
+    item_repo = item.get("repo")
+    effective_repo = Path(item_repo).expanduser().resolve() if item_repo else repo
     while True:
-        if not bind_worker(current, rec, repo, prompt_path, prompt_text, approve, supervise, goal):
+        if not bind_worker(current, rec, effective_repo, prompt_path, prompt_text, approve, supervise, goal):
             status = "no-argv"
             attempts.append(
                 {"provider": current.get("provider"), "via": current.get("via"), "status": status}
@@ -539,7 +554,7 @@ def run_attempts(
                 env_try["HERMES_HOME"] = current["home"]
             else:
                 env_try.pop("HERMES_HOME", None)
-            code, stdout, stderr = execute_item(rec, repo, timeout, env_try, run_bound)
+            code, stdout, stderr = execute_item(rec, effective_repo, timeout, env_try, run_bound)
             status = "ok" if code == 0 else f"exit {code}"
         except subprocess.TimeoutExpired:
             code, stdout, stderr, status = 1, "", "", "timeout"
@@ -687,6 +702,17 @@ def main() -> None:
         log_path = logs / f"{item['kind']}.log"
         rec["log"] = str(log_path)
         env = os.environ.copy()
+        secret_env = Path.home() / ".local/bin/secret-env"
+        if item.get("provider") == "grok" and not env.get("GBRAIN_TOKEN_GROK") and secret_env.exists():
+            # grok 설정은 gbrain 토큰을 이 env 에서 읽는다(apply-mcp.sh 가 평문 대신 bearer_token_env_var 로 둔다).
+            # secret-env 가 없는 머신(맥북)이나 조회 실패면 토큰 없이 띄운다: gbrain 만 빠지고 grok 작업은 돈다
+            try:
+                tok = subprocess.run([str(secret_env), "-v", "GBRAIN_TOKEN_GROK"],
+                                     capture_output=True, text=True, timeout=20).stdout.strip()
+            except (OSError, subprocess.TimeoutExpired):
+                tok = ""
+            if tok:
+                env["GBRAIN_TOKEN_GROK"] = tok
         code, stdout, stderr, status, attempts = run_attempts(
             item,
             rec,

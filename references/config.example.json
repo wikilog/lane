@@ -29,7 +29,7 @@
   "providers": {
     "hermes": {
       "bin": "hermes",
-      "home": "~/.hermes-qwen"
+      "home": "~/.hermes-deepseek"
     },
     "minimax": {
       "bin": "hermes",
@@ -37,7 +37,7 @@
     },
     "qwen": {
       "bin": "hermes",
-      "home": "~/.hermes-qwen"
+      "home": "~/.hermes-deepseek"
     }
   }
 }
